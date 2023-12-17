@@ -1,13 +1,8 @@
 #include <sourcemod>
 #include <shavit>
 #include <discord>
-#include <colorvariables>
-#undef REQUIRE_EXTENSIONS
-#include <ripext>
 #pragma newdecls required
 #pragma semicolon 1
-
-#define PLUGIN_VERSION "1.3"
 
 
 char g_cCurrentMap[PLATFORM_MAX_PATH],
@@ -26,15 +21,13 @@ g_cvSteamWebAPIKey;
 
 char g_cHostname[128];
 
-bool g_bRIPExt = false;
-
 public Plugin myinfo =
 {
 	name = "[shavit] Discord WR Bot",
-	author = "SlidyBat, improved by Sarrus",
+	author = "SlidyBat, improved by Sarrus, ripext ripped nimmy",
 	description = "Makes discord bot post message when server WR is beaten",
-	version = PLUGIN_VERSION,
-	url = "steamcommunity.com/id/SlidyBat2"
+	version = "1.4",
+	url = "https://github.com/Nimmy2222/shavit-discord"
 }
 
 public void OnPluginStart()
@@ -60,26 +53,6 @@ public void OnPluginStart()
 }
 
 
-public void OnAllPluginsLoaded()
-{
-	g_bRIPExt = LibraryExists("ripext");
-}
-
-
-public void OnLibraryAdded(const char[] name)
-{
-	if (StrEqual(name, "ripext"))
-	g_bRIPExt = true;
-}
-
-
-public void OnLibraryRemoved(const char[] name)
-{
-	if (StrEqual(name, "ripext"))
-	g_bRIPExt = false;
-}
-
-
 public void OnConVarChanged( ConVar convar, const char[] oldValue, const char[] newValue )
 {
 	g_cvHostname.GetString( g_cHostname, sizeof( g_cHostname ) );
@@ -96,8 +69,9 @@ public void OnMapStart()
 
 public Action CommandDiscordTest(int client, int args)
 {
-	Shavit_OnWorldRecord(client, 1, 12.3, 35, 23, 93.25, 1, 14.01, 14.5, 82.3, 0.0, 0.0, 0);
-	CPrintToChat(client, "{green}[shavit-discord] {default}Discord Test Message has been sent.");
+	sendDiscordAnnouncement(client, 1, 12.3, 35, 23, 93.25, 1, 14.01, 14.5, 82.3);
+	PrintToChat(client, "[shavit-discord] Discord Test Message has been sent.");
+	return Plugin_Handled;
 }
 
 
@@ -105,9 +79,6 @@ public void Shavit_OnWorldRecord(int client, int style, float time, int jumps, i
 {
 	if( GetConVarInt(g_cvMinimumrecords) > 0 && Shavit_GetRecordAmount( style, track ) < GetConVarInt(g_cvMinimumrecords) ) // dont print if its a new record to avoid spam for new maps
 	return;
-	if(!StrEqual(g_szApiKey, "") && g_bRIPExt)
-	GetProfilePictureURL(client, style, time, jumps, strafes, sync, track, oldwr, oldtime, perfs);
-	else
 	sendDiscordAnnouncement(client, style, time, jumps, strafes, sync, track, oldwr, oldtime, perfs);
 }
 
@@ -194,67 +165,6 @@ stock void sendDiscordAnnouncement(int client, int style, float time, int jumps,
 }
 
 
-stock void GetProfilePictureURL( int client, int style, float time, int jumps, int strafes, float sync, int track, float oldwr, float oldtime, float perfs)
-{
-	HTTPRequest httpRequest;
-
-	DataPack pack = new DataPack();
-	pack.WriteCell(client);
-	pack.WriteCell(style);
-	pack.WriteCell(time);
-	pack.WriteCell(jumps);
-	pack.WriteCell(strafes);
-	pack.WriteCell(sync);
-	pack.WriteCell(track);
-	pack.WriteCell(oldwr);
-	pack.WriteCell(oldtime);
-	pack.WriteCell(perfs);
-	pack.Reset();
-
-	char szRequestBuffer[1024],
-	szSteamID[64];
-
-	GetClientAuthId(client, AuthId_SteamID64, szSteamID, sizeof szSteamID, true);
-
-	Format(szRequestBuffer, sizeof szRequestBuffer, "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=%s&steamids=%s&format=json", g_szApiKey,szSteamID);
-	httpRequest = new HTTPRequest(szRequestBuffer);
-	httpRequest.Get(OnResponseReceived, pack);
-}
-
-
-stock void OnResponseReceived(HTTPResponse response, DataPack pack)
-{
-	pack.Reset();
-	int client = pack.ReadCell();
-	int style = pack.ReadCell();
-	float time = pack.ReadCell();
-	int jumps = pack.ReadCell();
-	int strafes = pack.ReadCell();
-	float sync = pack.ReadCell();
-	int track = pack.ReadCell();
-	float oldwr = pack.ReadCell();
-	float oldtime = pack.ReadCell();
-	float perfs = pack.ReadCell();
-
-	if (response.Status != HTTPStatus_OK)
-	return;
-
-	JSONObject objects = view_as<JSONObject>(response.Data);
-	JSONObject Response = view_as<JSONObject>(objects.Get("response"));
-	JSONArray players = view_as<JSONArray>(Response.Get("players"));
-	int playerlen = players.Length;
-
-	JSONObject player;
-	for (int i = 0; i < playerlen; i++)
-	{
-		player = view_as<JSONObject>(players.Get(i));
-		player.GetString("avatarmedium", g_szPictureURL, sizeof(g_szPictureURL));
-		delete player;
-	}
-	sendDiscordAnnouncement(client, style, time, jumps, strafes, sync, track, oldwr, oldtime, perfs);
-}
-
-
 stock void RemoveWorkshop(char[] szMapName, int len)
 {
 	int i=0;
@@ -273,17 +183,4 @@ stock void RemoveWorkshop(char[] szMapName, int len)
 	while(szMapName[i] != szCompare[0]);
 	szBuffer[i] = szCompare[0];
 	ReplaceString(szMapName, len, szBuffer, "", true);
-}
-
-public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
-{
-	MarkNativeAsOptional("HTTPClient.HTTPClient");
-	MarkNativeAsOptional("HTTPClient.SetHeader");
-	MarkNativeAsOptional("HTTPClient.Get");
-	MarkNativeAsOptional("JSONObject.Get");
-	MarkNativeAsOptional("JSONObject.GetString");
-	MarkNativeAsOptional("HTTPResponse.Status.get");
-	MarkNativeAsOptional("JSONArray.Length.get");
-	MarkNativeAsOptional("JSONArray.Get");
-	MarkNativeAsOptional("HTTPResponse.Data.get");
 }
