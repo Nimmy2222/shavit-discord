@@ -9,6 +9,7 @@
 
 char g_sMapName[PLATFORM_MAX_PATH];
 char g_sMapPicUrl[1024];
+char g_sPlayerPictureUrl[MAXPLAYERS + 1][1024];
 
 int g_iMainColor;
 int g_iBonusColor;
@@ -52,6 +53,14 @@ public void OnPluginStart()
 	HookConVarChange(g_cvBonusEmbedColor, CvarChanged);
 
 	UpdateColorCvars();
+
+	for(int i = 1; i < MaxClients; i++)
+	{
+		if(IsClientConnected(i) && !IsFakeClient(i))
+		{
+			OnClientAuthorized(i, "");
+		}
+	}
 
 	RegAdminCmd("sm_discordtest", CommandDiscordTest, ADMFLAG_ROOT);
 	AutoExecConfig(true, "plugin.shavit-discord-steamworks");
@@ -116,39 +125,47 @@ public void Shavit_OnWorldRecord(int client, int style, float time, int jumps, i
 	{
 		return;
 	}
+
 	if(!(g_cvSendOffstyleRecords.IntValue) && style != 0)
 	{
 		return;
 	}
+
 	if(!(g_cvSendBonusRecords.IntValue) && track != Track_Main)
 	{
 		return;
 	}
 
+	FormatEmbedMessage(client, style, time, jumps, strafes, sync, track, oldwr);
+}
+
+public void OnClientAuthorized(int client, const char[] auth)
+{
 	char apiKey[512];
 	g_cvSteamWebAPIKey.GetString(apiKey, sizeof(apiKey));
 	if(!StrEqual(apiKey, ""))
 	{
-		SteamAPIRequest(client, style, time, jumps, strafes, sync, track, oldwr);
+		SteamAPIRequest(client);
 	}
 	else
 	{
-		FormatEmbedMessage(client, style, time, jumps, strafes, sync, track, oldwr, "");
+		g_sPlayerPictureUrl[client] = "";
 	}
 }
 
 //http
 
-void FormatEmbedMessage(int client, int style, float time, int jumps, int strafes, float sync, int track, float oldwr, char profileUrl[1024])
+void FormatEmbedMessage(int client, int style, float time, int jumps, int strafes, float sync, int track, float oldwr)
 {
-
 	char message[512];
 	Shavit_GetStyleStrings(style, sStyleName, message, sizeof(message));
 
 	char recordTxt[512];
-	if(track == Track_Main) {
+	if(track == Track_Main)
+	{
 		Format(recordTxt, sizeof(recordTxt), "__**%s**__ - **Main** - **%s**", g_sMapName, message);
-	} else {
+	} else
+	{
 		Format(recordTxt, sizeof(recordTxt), "__**%s**__ - **Bonus #%i** - **%s**", g_sMapName, track, message);
 	}
 
@@ -164,7 +181,8 @@ void FormatEmbedMessage(int client, int style, float time, int jumps, int strafe
 	JSON_Object author = new JSON_Object();
 	author.SetString("name", name);
 	author.SetString("url", playerUrl);
-	author.SetString("icon_url", profileUrl);
+	author.SetString("icon_url", g_sPlayerPictureUrl[client]);
+
 
 
 	FormatSeconds(time, message, sizeof(message));
@@ -186,7 +204,6 @@ void FormatEmbedMessage(int client, int style, float time, int jumps, int strafe
 	statsField.SetBool("inline", true);
 
 	JSON_Object footerField = new JSON_Object();
-
 	char hostname[512];
 	g_cvHostname.GetString(hostname, sizeof(hostname));
 	Format(message, sizeof(message), "%s", hostname);
@@ -267,17 +284,10 @@ public void OnMessageSent(Handle request, bool failure, bool requestSuccessful, 
 	delete request;
 }
 
-void SteamAPIRequest(int client, int style, float time, int jumps, int strafes, float sync, int track, float oldwr)
+void SteamAPIRequest(int client)
 {
 	DataPack pack = new DataPack();
 	pack.WriteCell(client);
-	pack.WriteCell(style);
-	pack.WriteCell(time);
-	pack.WriteCell(jumps);
-	pack.WriteCell(strafes);
-	pack.WriteCell(sync);
-	pack.WriteCell(track);
-	pack.WriteCell(oldwr);
 	pack.Reset();
 
 	char steamid[64];
@@ -319,13 +329,6 @@ void ResponseBodyCallback(const char[] data, DataPack pack)
 
 	pack.Reset();
 	int client = pack.ReadCell();
-	int style = pack.ReadCell();
-	float time = pack.ReadCell();
-	int jumps = pack.ReadCell();
-	int strafes = pack.ReadCell();
-	float sync = pack.ReadCell();
-	int track = pack.ReadCell();
-	float oldwr = pack.ReadCell();
 	delete pack;
 
 	JSON_Object objects = view_as<JSON_Object>(json_decode(data));
@@ -342,9 +345,10 @@ void ResponseBodyCallback(const char[] data, DataPack pack)
 			player = view_as<JSON_Object>(players.GetObject(i));
 			player.GetString("avatarmedium", profilePictureUrl, sizeof(profilePictureUrl));
 		}
-		json_cleanup_and_delete(player);
+		json_cleanup_and_delete(objects);
 	}
-	FormatEmbedMessage(client, style, time, jumps, strafes, sync, track, oldwr, profilePictureUrl);
+	g_sPlayerPictureUrl[client] = profilePictureUrl;
+	PrintToConsoleAll("Shavit-Discord: Profile Picture URL Retrieved");
 }
 
 void BananaAPIRequest()
@@ -381,27 +385,27 @@ void BananaResponseBodyCallback(const char[] data, DataPack pack)
 	JSON_Object objects = view_as<JSON_Object>(json_decode(data));
 	if (objects == null)
 	{
+		delete objects;
 		return;
 	}
 
 	JSON_Array records = view_as<JSON_Array>(objects.GetObject("_aRecords"));
-	if(records.Length < 1)
+	if(records.Length > 1)
 	{
-		return;
+		JSON_Object response = records.GetObject(0);
+		JSON_Object media = response.GetObject("_aPreviewMedia");
+		JSON_Array images = view_as<JSON_Array>(media.GetObject("_aImages"));
+		JSON_Object picture = images.GetObject(0);
+
+		char url[1024];
+		picture.GetString("_sBaseUrl", url, sizeof(url));
+
+		char file[512];
+		picture.GetString("_sFile", file, sizeof(file));
+		Format(g_sMapPicUrl, sizeof(g_sMapPicUrl), "%s/%s", url, file);
 	}
-
-	JSON_Object response = records.GetObject(0);
-	JSON_Object media = response.GetObject("_aPreviewMedia");
-	JSON_Array images = view_as<JSON_Array>(media.GetObject("_aImages"));
-	JSON_Object picture = images.GetObject(0);
-
-	char url[1024];
-	picture.GetString("_sBaseUrl", url, sizeof(url));
-
-	char file[512];
-	picture.GetString("_sFile", file, sizeof(file));
-	Format(g_sMapPicUrl, sizeof(g_sMapPicUrl), "%s/%s", url, file);
-	json_cleanup_and_delete(picture);
+	json_cleanup_and_delete(objects);
+	PrintToConsoleAll("Shavit-Discord: Map URL retrieved");
 }
 
 //util
