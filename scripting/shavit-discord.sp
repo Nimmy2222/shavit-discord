@@ -2,6 +2,7 @@
 #include <shavit>
 #include <SteamWorks>
 #include <json>
+#include <steamworks-profileurl>
 
 #pragma newdecls required
 #pragma semicolon 1
@@ -9,7 +10,6 @@
 
 char g_sMapName[PLATFORM_MAX_PATH];
 char g_sMapPicUrl[1024];
-char g_sPlayerPictureUrl[MAXPLAYERS + 1][1024];
 
 int g_iMainColor;
 int g_iBonusColor;
@@ -24,14 +24,13 @@ ConVar g_cvMainEmbedColor;
 ConVar g_cvBonusEmbedColor;
 ConVar g_cvSendBonusRecords;
 ConVar g_cvSendOffstyleRecords;
-ConVar g_cvSteamWebAPIKey;
 
 public Plugin myinfo =
 {
 	name = "[shavit] Discord WR Bot (Steamworks)",
 	author = "SlidyBat, improved by Sarrus / nimmy",
 	description = "Makes discord bot post message when server WR is beaten",
-	version = "2.3",
+	version = "2.4",
 	url = "https://github.com/Nimmy2222/shavit-discord"
 }
 
@@ -46,21 +45,12 @@ public void OnPluginStart()
 	g_cvBonusEmbedColor = CreateConVar("shavit-discord-bonus-color", "0, 255, 0", "Color of embed for when bonus wr is beaten");
 	g_cvSendBonusRecords = CreateConVar("shavit-discord-send-bonus", "1", "Whether to send bonus records or not 1 Enabled 0 Disabled");
 	g_cvSendOffstyleRecords = CreateConVar("shavit-discord-send-offstyle", "1", "Whether to send offstyle records or not 1 Enabled 0 Disabled");
-	g_cvSteamWebAPIKey = CreateConVar("shavit-discord-steam-api-key", "", "Allows the use of the player profile picture, leave blank to disable. The key can be obtained here: https://steamcommunity.com/dev/apikey", FCVAR_PROTECTED);
 	g_cvHostname = FindConVar("hostname");
 
 	HookConVarChange(g_cvMainEmbedColor, CvarChanged);
 	HookConVarChange(g_cvBonusEmbedColor, CvarChanged);
 
 	UpdateColorCvars();
-
-	for(int i = 1; i < MaxClients; i++)
-	{
-		if(IsClientConnected(i) && !IsFakeClient(i))
-		{
-			OnClientAuthorized(i, "");
-		}
-	}
 
 	RegAdminCmd("sm_discordtest", CommandDiscordTest, ADMFLAG_ROOT);
 	AutoExecConfig(true, "plugin.shavit-discord-steamworks");
@@ -139,20 +129,6 @@ public void Shavit_OnWorldRecord(int client, int style, float time, int jumps, i
 	FormatEmbedMessage(client, style, time, jumps, strafes, sync, track, oldwr);
 }
 
-public void OnClientAuthorized(int client, const char[] auth)
-{
-	char apiKey[512];
-	g_cvSteamWebAPIKey.GetString(apiKey, sizeof(apiKey));
-	if(!StrEqual(apiKey, ""))
-	{
-		SteamAPIRequest(client);
-	}
-	else
-	{
-		g_sPlayerPictureUrl[client] = "";
-	}
-}
-
 //http
 
 void FormatEmbedMessage(int client, int style, float time, int jumps, int strafes, float sync, int track, float oldwr)
@@ -181,8 +157,16 @@ void FormatEmbedMessage(int client, int style, float time, int jumps, int strafe
 	JSON_Object author = new JSON_Object();
 	author.SetString("name", name);
 	author.SetString("url", playerUrl);
-	author.SetString("icon_url", g_sPlayerPictureUrl[client]);
 
+	char playerProfilePicture[1024];
+	if(Sw_GetProfileUrl(client, playerProfilePicture, sizeof(playerProfilePicture)))
+	{
+		author.SetString("icon_url", playerProfilePicture);
+	}
+	else
+	{
+		PrintToConsole(client, "Shavit-Discord: Failed to find profile picture URL");
+	}
 
 
 	FormatSeconds(time, message, sizeof(message));
@@ -228,8 +212,10 @@ void FormatEmbedMessage(int client, int style, float time, int jumps, int strafe
 
 	JSON_Object embed = new JSON_Object();
 	embed.SetString("title", recordTxt);
+
 	char color[32];
 	Format(color, sizeof(color), "%i", (track == Track_Main && style == 0) ? g_iMainColor:g_iBonusColor);
+
 	embed.SetString("color", color);
 	embed.SetObject("fields", fields);
 	embed.SetObject("author", author);
@@ -282,73 +268,6 @@ public void OnMessageSent(Handle request, bool failure, bool requestSuccessful, 
 	}
 
 	delete request;
-}
-
-void SteamAPIRequest(int client)
-{
-	DataPack pack = new DataPack();
-	pack.WriteCell(client);
-	pack.Reset();
-
-	char steamid[64];
-	GetClientAuthId(client, AuthId_SteamID64, steamid, sizeof(steamid));
-	char endpoint[1024];
-
-	char apiKey[512];
-	g_cvSteamWebAPIKey.GetString(apiKey, sizeof(apiKey));
-	Format(endpoint, sizeof(endpoint), "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=%s&steamids=%s", apiKey, steamid);
-
-	Handle request;
-	if (!(request = SteamWorks_CreateHTTPRequest(k_EHTTPMethodGET, endpoint))
-	  || !SteamWorks_SetHTTPRequestHeaderValue(request, "accept", "application/json")
-	  || !SteamWorks_SetHTTPRequestContextValue(request, pack)
-	  || !SteamWorks_SetHTTPRequestAbsoluteTimeoutMS(request, 4000)
-	  || !SteamWorks_SetHTTPCallbacks(request, RequestCompletedCallback)
-	  || !SteamWorks_SendHTTPRequest(request)
-	)
-	{
-		delete pack;
-		delete request;
-		LogError("Shavit-Discord: failed to setup & send HTTP request");
-	}
-	return;
-}
-
-public void RequestCompletedCallback(Handle request, bool bFailure, bool bRequestSuccessful, EHTTPStatusCode eStatusCode, DataPack pack)
-{
-	if (bFailure || !bRequestSuccessful || eStatusCode != k_EHTTPStatusCode200OK)
-	{
-		LogError("Shavit-Discord: API request failed");
-		return;
-	}
-	SteamWorks_GetHTTPResponseBodyCallback(request, ResponseBodyCallback, pack);
-}
-
-void ResponseBodyCallback(const char[] data, DataPack pack)
-{
-
-	pack.Reset();
-	int client = pack.ReadCell();
-	delete pack;
-
-	JSON_Object objects = view_as<JSON_Object>(json_decode(data));
-
-	char profilePictureUrl[1024];
-	if (objects != INVALID_HANDLE)
-	{
-		JSON_Object response = objects.GetObject("response");
-		JSON_Array players = view_as<JSON_Array>(response.GetObject("players"));
-
-		JSON_Object player;
-		for (int i = 0; i < players.Length; i++)
-		{
-			player = view_as<JSON_Object>(players.GetObject(i));
-			player.GetString("avatarmedium", profilePictureUrl, sizeof(profilePictureUrl));
-		}
-		json_cleanup_and_delete(objects);
-	}
-	g_sPlayerPictureUrl[client] = profilePictureUrl;
-	PrintToConsoleAll("Shavit-Discord: Profile Picture URL Retrieved");
 }
 
 void BananaAPIRequest()
