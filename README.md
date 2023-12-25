@@ -5,7 +5,8 @@
 Makes discord bot post message when server record is beaten.
 
 ## Requirements ##
-* [SteamWorks](https://github.com/KyleSanderson/SteamWorks/releases)
+* [SteamWorks](https://github.com/KyleSanderson/SteamWorks/releases) /Extensions folder/
+* [GetProfileUrl](https://github.com/Nimmy2222/steamworks-getprofileurl) /Plugins folder/
 
 
 ## Installation ##
