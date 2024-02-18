@@ -9,7 +9,6 @@
 
 
 char g_sMapName[PLATFORM_MAX_PATH];
-char g_sMapPicUrl[1024];
 
 int g_iMainColor;
 int g_iBonusColor;
@@ -93,8 +92,6 @@ public void OnMapStart()
 {
 	GetCurrentMap(g_sMapName, sizeof(g_sMapName));
 	RemoveWorkshop(g_sMapName, sizeof(g_sMapName));
-	Format(g_sMapPicUrl, sizeof(g_sMapPicUrl), "");
-	BananaAPIRequest();
 }
 
 public Action CommandDiscordTest(int client, int args)
@@ -200,12 +197,6 @@ void FormatEmbedMessage(int client, int style, float time, int jumps, int strafe
 		footerField.SetString("icon_url", footerUrl);
 	}
 
-	JSON_Object thumbField = new JSON_Object();
-	if(!StrEqual(g_sMapPicUrl, ""))
-	{
-		thumbField.SetString("url", g_sMapPicUrl);
-	}
-
 	JSON_Array fields = new JSON_Array();
 	fields.PushObject(timeField);
 	fields.PushObject(statsField);
@@ -220,7 +211,6 @@ void FormatEmbedMessage(int client, int style, float time, int jumps, int strafe
 	embed.SetObject("fields", fields);
 	embed.SetObject("author", author);
 	embed.SetObject("footer", footerField);
-	embed.SetObject("thumbnail", thumbField);
 
 	JSON_Array embeds = new JSON_Array();
 	embeds.PushObject(embed);
@@ -268,63 +258,6 @@ public void OnMessageSent(Handle request, bool failure, bool requestSuccessful, 
 	}
 
 	delete request;
-}
-
-void BananaAPIRequest()
-{
-	char endpoint[1024];
-	Format(endpoint, sizeof(endpoint), "https://gamebanana.com/apiv11/Util/Search/Results?_sSearchString=%s", g_sMapName);
-
-	Handle request;
-	if (!(request = SteamWorks_CreateHTTPRequest(k_EHTTPMethodGET, endpoint))
-	  || !SteamWorks_SetHTTPRequestHeaderValue(request, "accept", "application/json")
-	  || !SteamWorks_SetHTTPRequestAbsoluteTimeoutMS(request, 4000)
-	  || !SteamWorks_SetHTTPCallbacks(request,  BananaRequestCompletedCallback)
-	  || !SteamWorks_SendHTTPRequest(request)
-	)
-	{
-		delete request;
-		LogError("Shavit-Discord: failed to setup & send HTTP request");
-	}
-	return;
-}
-
-public void BananaRequestCompletedCallback(Handle request, bool bFailure, bool bRequestSuccessful, EHTTPStatusCode eStatusCode, DataPack pack)
-{
-	if (bFailure || !bRequestSuccessful || eStatusCode != k_EHTTPStatusCode200OK)
-	{
-		LogError("Shavit-Discord: API request failed");
-		return;
-	}
-	SteamWorks_GetHTTPResponseBodyCallback(request, BananaResponseBodyCallback);
-}
-
-void BananaResponseBodyCallback(const char[] data, DataPack pack)
-{
-	JSON_Object objects = view_as<JSON_Object>(json_decode(data));
-	if (objects == null)
-	{
-		delete objects;
-		return;
-	}
-
-	JSON_Array records = view_as<JSON_Array>(objects.GetObject("_aRecords"));
-	if(records.Length > 1)
-	{
-		JSON_Object response = records.GetObject(0);
-		JSON_Object media = response.GetObject("_aPreviewMedia");
-		JSON_Array images = view_as<JSON_Array>(media.GetObject("_aImages"));
-		JSON_Object picture = images.GetObject(0);
-
-		char url[1024];
-		picture.GetString("_sBaseUrl", url, sizeof(url));
-
-		char file[512];
-		picture.GetString("_sFile", file, sizeof(file));
-		Format(g_sMapPicUrl, sizeof(g_sMapPicUrl), "%s/%s", url, file);
-	}
-	json_cleanup_and_delete(objects);
-	PrintToConsoleAll("Shavit-Discord: Map URL retrieved");
 }
 
 //util
